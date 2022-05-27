@@ -1,7 +1,15 @@
 function Add-AdGroupMemberships {
 	param(
-		[string]$Csv,
+		[Parameter(Mandatory=$true)]
+		[string]$InputCsv,
+		
+		[string]$InputUserColumn = "User",
+		[string]$InputGroupColumn = "Group",
+		
+		[string]$OutputCsv,
+		
 		[switch]$TestRun,
+		
 		[switch]$PassThru
 	)
 
@@ -29,8 +37,8 @@ function Add-AdGroupMemberships {
 	}
 	
 	function Get-CsvData {
-		log "Importing membership data from CSV: `"$csv`"..."
-		$adds = Import-Csv $Csv
+		log "Importing membership data from CSV: `"$InputCsv`"..."
+		$adds = Import-Csv $InputCsv
 		$addsCount = "invalid"
 		if($adds) { $addsCount = @($adds).count }
 		log "Imported `"$addsCount`" rows." -L 1
@@ -41,7 +49,7 @@ function Add-AdGroupMemberships {
 		log "Validating user..." -L 3
 		$valid = $false
 		
-		$user = $membership.User
+		$user = $membership.$InputUserColumn
 		if($user) {
 			log "User found in CSV data." -L 4
 			if($user -ne "") {
@@ -64,7 +72,7 @@ function Add-AdGroupMemberships {
 		log "Validating group..." -L 3
 		$valid = $false
 		
-		$group = $membership.Group
+		$group = $membership.$InputGroupColumn
 		if($group) {
 			log "Group found in CSV data." -L 4
 			if($group -ne "") {
@@ -120,7 +128,41 @@ function Add-AdGroupMemberships {
 		log "Testing whether user object exists in AD..." -L 3
 		$exists = $false
 		
-		# TODO
+		try {
+			$response = Get-ADUser -Identity $membership.$InputUserColumn
+		}
+		catch {
+			$err = $_.Exception.Message
+			log $err -L 3
+		}
+		
+		if(-not $err) {
+			if(-not $response) {
+				$err = "User not found in AD!"
+				log $err -L 3
+			}
+			else {
+				if(-not $response.Name) {
+					$err = "Response to AD user query not recognized!"
+					log $err -L 3
+				}
+				else {
+					if(-not ($response.Name -eq $membership.$InputUserColumn)) {
+						$err = "Response to AD user query returned unexpected results!"
+						log $err -L 3
+					}
+					else {
+						log "User found in AD." -L 3
+						$exists = $true
+					}
+				}
+			}
+		}
+		
+		if($err) {
+			$membership.Error = $true
+			$membership.Result = $err
+		}
 		
 		$membership = addm "UserExists" $exists $membership
 		$membership
@@ -130,7 +172,41 @@ function Add-AdGroupMemberships {
 		log "Testing whether group object exists in AD..." -L 3
 		$exists = $false
 		
-		# TODO
+		try {
+			$response = Get-ADGroup -Identity $membership.$InputGroupColumn
+		}
+		catch {
+			$err = $_.Exception.Message
+			log $err -L 3
+		}
+		
+		if(-not $err) {
+			if(-not $response) {
+				$err = "Group not found in AD!"
+				log $err -L 3
+			}
+			else {
+				if(-not $response.Name) {
+					$err = "Response to AD group query not recognized!"
+					log $err -L 3
+				}
+				else {
+					if(-not ($response.Name -eq $membership.$InputGroupColumn)) {
+						$err = "Response to AD group query returned unexpected results!"
+						log $err -L 3
+					}
+					else {
+						log "Group found in AD." -L 3
+						$exists = $true
+					}
+				}
+			}
+		}
+		
+		if($err) {
+			$membership.Error = $true
+			$membership.Result = $err
+		}
 		
 		$membership = addm "GroupExists" $exists $membership
 		$membership
@@ -174,7 +250,7 @@ function Add-AdGroupMemberships {
 		$exists = $false
 		
 		try {
-			$existingMembers = Get-ADGroupMember -Identity $membership.Group | Select -ExpandProperty Name
+			$existingMembers = Get-ADGroupMember -Identity $membership.$InputGroupColumn | Select -ExpandProperty Name
 		}
 		catch {
 			$err = $_.Exception.Message
@@ -182,7 +258,7 @@ function Add-AdGroupMemberships {
 		}
 		
 		if(-not $err) {
-			if(@($existingMembers) -contains $membership.User) {
+			if(@($existingMembers) -contains $membership.$InputUserColumn) {
 				$err = "Group already contains user."
 				log $err -L 3
 			}
@@ -209,7 +285,7 @@ function Add-AdGroupMemberships {
 		}
 		else {
 			try {
-				$response = Add-ADGroupMember -Identity $group -Members $user -PassThru
+				$response = Add-ADGroupMember -Identity $membership.$InputGroupColumn -Members $membership.$InputUserColumn -PassThru
 			}
 			catch {
 				$err = $_.Exception.Message
@@ -245,12 +321,12 @@ function Add-AdGroupMemberships {
 	
 	
 	function Process-Data($memberships) {
-		log "Processing imported memberhships..."
+		log "Processing imported memberships..."
 		
 		$memberships = $memberships | ForEach-Object {
 			$membership = $_
-			$user = $membership.user
-			$group = $membership.group
+			$user = $membership.$InputUserColumn
+			$group = $membership.$InputGroupColumn
 			log "Processing membership: user `"$user`", group `"$group`"..." -L 1
 			
 			$membership = addm "Result" "Unknown" $membership
@@ -280,10 +356,17 @@ function Add-AdGroupMemberships {
 		$memberships | Format-Table -AutoSize
 	}
 	
+	function Output-Csv($memberships) {
+		if($OutputCsv) {
+			$memberships | Export-Csv -NoTypeInformation -Encoding "Ascii" -Path $OutputCsv
+		}
+	}
+	
 	function Do-Stuff {
 		$memberships = Get-CsvData
 		$memberships = Process-Data $memberships
 		Print-Memberships $memberships
+		Output-Csv $memberships
 		if($PassThru) { $memberships }
 	}
 	
